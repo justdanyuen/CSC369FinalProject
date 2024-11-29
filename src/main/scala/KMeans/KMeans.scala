@@ -42,12 +42,12 @@ object KMeans {
 
     // set hyperparameters
     // k - number of clusters
-    val k = 3
+    val k = 5
     // centroids - initial k centroids - determine randomly
     val rand = new Random
     val centroids = (1 to k).map(_ => rand.nextInt(records.count().toInt)).toArray
     // convergence threshold -
-    val convThresh = 0.5
+    val convThresh = 1
 
     val indexedRecords = records.zipWithIndex()
     indexedRecords.collect().foreach { case (city, featureVector) =>
@@ -65,16 +65,6 @@ object KMeans {
     clusterMap.foreach { case (centroidVector, cityArray) =>
       println(s"Centroid: ${centroidVector.mkString("[", ", ", "]")}, Cities: ${cityArray.mkString(", ")}")
     }
-
-    // assign points to clusters - each cluster is a map of centroid vector -> list of cluster city names
-    // calculate euclidean distance between point and each centroid
-
-    // recompute centroids
-
-    // check for convergence, break out of loop if convergence threshold is met
-
-    // after loop ends
-    // print the cities for each cluster, with their vectors
   }
 
   def kMeans(points: RDD[(String, Array[Double])], centroids: Array[Array[Double]], convThresh: Double): RDD[(Array[Double], Array[String])] = {
@@ -106,13 +96,19 @@ object KMeans {
 
   // for each centroid, compute new centroid by averaging the points assigned to it
   def recomputeCentroids(centroidsToCitiesRDD: RDD[(Array[Double], Array[String])], points: RDD[(String, Array[Double])]): Array[Array[Double]] = {
+    val pointsMap = points.collectAsMap()
+    val pointsBroadcast = points.context.broadcast(pointsMap)
+
     centroidsToCitiesRDD.map { case (centroid, cities) =>
+      val pointsMap = pointsBroadcast.value
+
       // calculate mean
       val numCities = cities.length
-      val featureLength = points.lookup(cities.head).headOption.getOrElse(Array()).length
-      val zeroVector = Array.fill(featureLength)(0.0)
+//      val featureLength = points.lookup(cities.head).headOption.getOrElse(Array()).length
+      val zeroVector = Array.fill(pointsMap(cities.head).length)(0.0)
       val sum = cities.foldLeft(zeroVector) { (curSum, city) =>
-        val cityVector = points.lookup(city).headOption.getOrElse(Array())
+        val cityVector = pointsMap.getOrElse(city, Array.fill(zeroVector.length)(0.0))
+//        val cityVector = points.lookup(city).headOption.getOrElse(Array())
         cityVector.zip(curSum).map { case (v1, v2) => v1 + v2}
       }
       sum.map(_ / numCities)
