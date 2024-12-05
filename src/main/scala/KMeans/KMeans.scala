@@ -4,11 +4,12 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.SparkContext._
 
 import scala.io._
+import java.io._
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.rdd._
-import org.apache.log4j.Logger
-import org.apache.log4j.Level
-import org.apache.spark.sql.catalyst.dsl.expressions.longToLiteral
+//import org.apache.log4j.Logger
+//import org.apache.log4j.Level
+//import org.apache.spark.sql.catalyst.dsl.expressions.longToLiteral
 
 import scala.collection._
 import scala.util.Random
@@ -18,6 +19,7 @@ import scala.math.sqrt
 
 object KMeans {
   def main(args: Array[String]): Unit = {
+    System.setProperty("hadoop.home.dir", "c:/winutils/")
     val conf = new SparkConf().setAppName("KMeans").setMaster("local[*]")
     val sc = new SparkContext(conf)
     println("spark session successfully started.")
@@ -42,7 +44,8 @@ object KMeans {
 
     // set hyperparameters
     // k - number of clusters
-    val k = 5
+    // 4 ended up being most optimal
+    val k = 4
     // centroids - initial k centroids - determine randomly
     val rand = new Random
     val centroids = (1 to k).map(_ => rand.nextInt(records.count().toInt)).toArray
@@ -65,6 +68,38 @@ object KMeans {
     clusterMap.foreach { case (centroidVector, cityArray) =>
       println(s"Centroid: ${centroidVector.mkString("[", ", ", "]")}, Cities: ${cityArray.mkString(", ")}")
     }
+
+    println("\nFinal Clustering Results:")
+    println("========================")
+    clusterMap.collect().zipWithIndex.foreach { case ((centroid, cities), index) =>
+      println(s"\nCluster ${index + 1}")
+      println(s"Centroid: ${centroid.mkString("[", ", ", "]")}")
+      println("Cities in this cluster:")
+      cities.foreach { city =>
+        val cityFeatures = records.lookup(city).head
+        println(s"  $city: ${cityFeatures.mkString("[", ", ", "]")}")
+      }
+      println("------------------------")
+    }
+
+  }
+
+
+  // Add this function to calculate WCSS
+  def calculateWCSS(centroidsToCitiesRDD: RDD[(Array[Double], Array[String])], points: RDD[(String, Array[Double])]): Double = {
+    val pointsMap = points.collectAsMap()
+    val pointsBroadcast = points.context.broadcast(pointsMap)
+
+    // Sum of squared distances for each cluster
+    val wcss = centroidsToCitiesRDD.map { case (centroid, cities) =>
+      val pointsMap = pointsBroadcast.value
+      cities.map { city =>
+        val cityVector = pointsMap.getOrElse(city, Array.fill(centroid.length)(0.0))
+        euclideanDistance(cityVector, centroid) * euclideanDistance(cityVector, centroid)
+      }.sum // Sum of squared distances for this cluster
+    }.sum() // Total WCSS for all clusters
+
+    wcss
   }
 
   def kMeans(points: RDD[(String, Array[Double])], centroids: Array[Array[Double]], convThresh: Double): RDD[(Array[Double], Array[String])] = {
@@ -88,7 +123,12 @@ object KMeans {
         euclideanDistance(oldCentroid, newCentroid) < convThresh
     }
 
+    // Always calculate and print WCSS
+    val wcss = calculateWCSS(centroidToCitiesRDD, points)
+    println(s"WCSS for current run: $wcss")
+
     if (converged == true) {
+      println("Converged!")
       return centroidToCitiesRDD
     }
     return kMeans(points, newCentroids, convThresh)
@@ -104,11 +144,11 @@ object KMeans {
 
       // calculate mean
       val numCities = cities.length
-//      val featureLength = points.lookup(cities.head).headOption.getOrElse(Array()).length
+      //      val featureLength = points.lookup(cities.head).headOption.getOrElse(Array()).length
       val zeroVector = Array.fill(pointsMap(cities.head).length)(0.0)
       val sum = cities.foldLeft(zeroVector) { (curSum, city) =>
         val cityVector = pointsMap.getOrElse(city, Array.fill(zeroVector.length)(0.0))
-//        val cityVector = points.lookup(city).headOption.getOrElse(Array())
+        //        val cityVector = points.lookup(city).headOption.getOrElse(Array())
         cityVector.zip(curSum).map { case (v1, v2) => v1 + v2}
       }
       sum.map(_ / numCities)
